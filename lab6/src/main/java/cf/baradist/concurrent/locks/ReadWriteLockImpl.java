@@ -1,11 +1,11 @@
 package cf.baradist.concurrent.locks;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Simple ReadWriteLock implementation
- * NOTE: writers oppress readers!
+ * Simple fair ReadWriteLock implementation
  */
 public class ReadWriteLockImpl implements ReadWriteLock {
     private final Lock writeLock;
@@ -13,15 +13,19 @@ public class ReadWriteLockImpl implements ReadWriteLock {
     private final AtomicBoolean isWriting = new AtomicBoolean(false);
     private final AtomicInteger readersCount = new AtomicInteger();
     private final AtomicInteger waitingWritersCount = new AtomicInteger();
+    private final ConcurrentLinkedQueue<Thread> queue = new ConcurrentLinkedQueue<>();
 
     public ReadWriteLockImpl() {
         readLock = new Lock() {
             @Override
             public void lock() {
+                queue.add(Thread.currentThread());
                 synchronized (ReadWriteLockImpl.this) {
-                    while (isWriting.get() || waitingWritersCount.get() > 0) {
+                    while (queue.peek() != Thread.currentThread()) {
                         monitorWait();
                     }
+                    queue.poll();
+                    ReadWriteLockImpl.this.notifyAll();
                     readersCount.incrementAndGet();
                 }
             }
@@ -37,9 +41,10 @@ public class ReadWriteLockImpl implements ReadWriteLock {
         writeLock = new Lock() {
             @Override
             public void lock() {
+                queue.add(Thread.currentThread());
                 synchronized (ReadWriteLockImpl.this) {
                     waitingWritersCount.incrementAndGet();
-                    while (isWriting.get() || readersCount.get() > 0) {
+                    while (queue.peek() != Thread.currentThread() || readersCount.get() > 0) {
                         monitorWait();
                     }
                     waitingWritersCount.decrementAndGet();
@@ -50,6 +55,7 @@ public class ReadWriteLockImpl implements ReadWriteLock {
             @Override
             public void unlock() {
                 synchronized (ReadWriteLockImpl.this) {
+                    queue.poll();
                     isWriting.set(false);
                     ReadWriteLockImpl.this.notifyAll();
                 }
